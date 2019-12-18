@@ -19,7 +19,7 @@ import sys
 RDM = np.random
 
 class DataGenerator:
-    def __init__(self,hwdb_trn_dir,hwdb_tst_dir,hcl_dir,background_dir,default_bg_path,corpus_path,off_corpus,hcl_ratio,img_height,img_width,const_char_num=False,max_char_num=12,line_mix=False,test_mode=False,true_write_type=True):
+    def __init__(self,hwdb_trn_dir,hwdb_tst_dir,hcl_dir,background_dir,default_bg_path,corpus_path,off_corpus,hcl_ratio,img_height,img_width,const_char_num=False,max_char_num=12,line_mix=False,test_mode=False,true_write_type=True,true_write_type_ratio=1):
         self.char_dict = dict(dictionary.char_dict)
         self.char_dict_reverse = {v: k for k, v in self.char_dict.items()}
 
@@ -39,6 +39,8 @@ class DataGenerator:
         self.off_corpus = off_corpus
         self.test_mode = test_mode
         self.true_write_type = true_write_type
+        self.temp_true_type = self.true_write_type
+        self.true_write_type_ratio = true_write_type_ratio
 
         print("DataGenerator init...")
         print("---hwdb_trn_dir:", self.hwdb_trn_dir)
@@ -55,6 +57,7 @@ class DataGenerator:
         print("---line_mix:", self.line_mix)
         print("---off_corpus:", self.off_corpus)
         print("---true_write_type:", self.true_write_type)
+        print("---true_write_type_ratio:", self.true_write_type_ratio)
         print("---test_mode:", self.test_mode)
 
         self.which = ""
@@ -196,8 +199,10 @@ class DataGenerator:
             aug_str += "-单字符随机大小"
         if aug.find("a")>=0:
             aug_str += "-单字符随机倾斜"
-        if aug.find("0")>=0:
-            aug_str += "-单字符真实化"
+        if aug.find("g")>=0:
+            aug_str += "-背景"
+        # if aug.find("0")>=0:
+        #     aug_str += "-单字符真实化"
         return aug_str
 
     def _show_image(self,image_list,label_list,filename="test_mode"):
@@ -358,6 +363,27 @@ class DataGenerator:
 
         # char_img = Image.open(char_path)
         char_img = self._read_data_from_res(path=char_path,mode="Image")
+
+        if char_type=="HWDB" and self.temp_data_augment.find("g")>=0:       ## 去除HWDB的白色背景
+            char_img = char_img.convert("RGBA")
+            pixdata = char_img.load()
+            for y in range(char_img.size[1]):
+                for x in range(char_img.size[0]):
+                    if pixdata[x, y][0] > 220 and pixdata[x, y][1] > 220 and pixdata[x, y][2] > 220 and pixdata[x, y][3] > 220:
+                        pixdata[x, y] = (255, 255, 255, 0)
+            # img_height = char_img.height
+            # img_width = char_img.width
+            # print("char_img.height=", img_height," , char_img.width=",img_width)
+            # test_image = np.array(char_img)
+            # # test_image[:,:,3]=0
+            # # HCL.shape=(64, 64, 4)
+            # print("test_image.shape=",test_image.shape)
+            # str_img = Image.new('RGBA',
+            #                     (img_width, img_height),
+            #                     (255, 255, 255, 0))
+            # print("test_image[:,:,3]=",test_image[:,:,3])
+            # test_image[:, :, 3] = 0
+            # char_img = Image.fromarray(test_image)
         # char_img = char_img.convert("RGBA")
         # r, g, b, a = char_img.split()
         # char_img.paste(char_img, (0, 0), mask=a)
@@ -384,7 +410,7 @@ class DataGenerator:
             background.paste(char_img)
         return background,char_type
 
-    def _get_str_img(self, str_gen ):
+    def _get_str_img(self, str_gen):
         '''
         生成文本行图片
         :param str_gen:
@@ -483,21 +509,38 @@ class DataGenerator:
         # char width
         char_width = 0
         char_aug_width = 0
+
+        if self.true_write_type:
+            true_type_threshold = 1000 * self.true_write_type_ratio
+            true_type_rdm = RDM.randint(0, 999)
+            if true_type_rdm >= true_type_threshold:
+                self.temp_true_type=False
+            else:
+                self.temp_true_type = True
+
         ## 根据预先设置的hcl ration 来源比例，随机个数字，数字小于threshold，就从HCL取，否则从HWDB取
-        threshold = 1000 * self.hcl_ratio
-        rdm = RDM.randint(0, 999)
+        hcl_ration_threshold = 1000 * self.hcl_ratio
+        hcl_ration_rdm = RDM.randint(0, 999)
+        str_from = ""
         for char in str_gen:
             if not self.line_mix:
-
-                if rdm >= threshold:
+                if hcl_ration_rdm >= hcl_ration_threshold:
                     char_img,char_from = self._get_char_img(char,"HWDB")
+                    str_from = "HWDB"
                 else:
                     char_img,char_from = self._get_char_img(char, "HCL")
+                    str_from = "HCL"
             else:
                 char_img,char_from = self._get_char_img(char,"line_mix")
+                str_from = "MIX"
 
             ## 对单字进行数据增强
             char_img_aug = char_img.copy()
+
+            ## 先真实化再数据增强
+            if self.true_write_type and self.temp_true_type:  # 首先对单字符图片进行真实化处理
+                char_img_aug = self._true_write_type_data(char_img_aug, char_from)
+
             char_img_aug = self._char_image_data_augment(char_img_aug,char_from)
             char_top_margin = 0
             if self.temp_data_augment.find("m")>=0:
@@ -524,7 +567,7 @@ class DataGenerator:
         r, g, b, a = str_img.split()
         back.paste(str_img, (5, 0),mask = a)
 
-        return back_aug,back
+        return back_aug,back,str_from
 
     def _get_char_list(self, str):
         '''
@@ -546,52 +589,115 @@ class DataGenerator:
         return new_str, char_list
 
     def _true_write_type_data(self,img,char_from):
-        augmenter = []
-        if char_from=="HWDB":       ## HWDB数据真实化效果不好，先跳过。只对HCL进行真实化
-            return img
+        # if char_from=="HWDB":       ## HWDB数据真实化效果不好，先跳过。只对HCL进行真实化
+        #     return img
+        img_h = img.height
+        img_w = img.width
+        if char_from=="HCL":
+            head_augmenter = []
+            tail_augmenter = []
+            head_augmenter.append(iaa.Invert(1, per_channel=True))
+            # aug_pwa = iaa.Resize((0.7, 1))  # 将w和h在0.5-1.5倍范围内resize
+            head_augmenter.append(iaa.Sharpen(alpha=(1, 1), lightness=(1, 1)))      # 锐化处理
+            # augmenter.append(iaa.ContrastNormalization((1.5, 1.5), per_channel=0.5))  # 对比度
+            head_seq = iaa.Sequential(head_augmenter)
+            tail_augmenter.append(iaa.Invert(1, per_channel=True))
+            tail_seq = iaa.Sequential(tail_augmenter)
+            # img为opencv，image为PIL，二者进行转化
+            # PIL->opencv
+            # img_cv = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2BGRA)
+            image_aug = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2GRAY)
+            image_aug = cv2.resize(image_aug, (128, 128))
+            # + cv2.THRESH_OTSU
+            # print("_true_write_type_data--char_from=",char_from)
 
-        # aug_pwa = iaa.Resize((0.7, 1))  # 将w和h在0.5-1.5倍范围内resize
-        augmenter.append(iaa.Sharpen(alpha=(1, 1), lightness=(1, 1)))      # 锐化处理
-        # augmenter.append(iaa.ContrastNormalization((1.5, 1.5), per_channel=0.5))  # 对比度
+            # ret3, image_aug = cv2.threshold(image_aug, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            head_imglist = []
+            head_imglist.append(image_aug)
+            images_aug = head_seq.augment_images(head_imglist)
+            image_aug = images_aug[0]
+            ret3, image_aug = cv2.threshold(image_aug, 245, 255, cv2.THRESH_BINARY)
+            #
+            kernel = np.ones((4, 4), np.uint8)
+            # image_aug = cv2.erode(image_aug, kernel, iterations=1)
+            # image_aug = cv2.dilate(image_aug, kernel, iterations=2)
 
-        seq = iaa.Sequential(augmenter)
-        # img为opencv，image为PIL，二者进行转化
-        # PIL->opencv
-        # img_cv = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2BGRA)
-        image_aug = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2GRAY)
+            image_aug = cv2.dilate(image_aug, kernel, iterations=1)
+            # image_aug = cv2.erode(image_aug, kernel, iterations=1)
+            image_aug = cv2.erode(image_aug, kernel, iterations=1)
+            #
+            # image_aug = cv2.Canny(image_aug, 0, 100)
+            #
+            # seq = iaa.Sequential([iaa.Invert(1, per_channel=True)])
+            # images_aug = seq.augment_images([image_aug])
+            # image_aug = images_aug[0]
+            # image_aug = cv2.morphologyEx(image_aug, cv2.MORPH_OPEN, kernel)
 
-        # + cv2.THRESH_OTSU
-        # print("_true_write_type_data--char_from=",char_from)
-        ret3, image_aug = cv2.threshold(image_aug, 245, 255, cv2.THRESH_BINARY)
-        # ret3, image_aug = cv2.threshold(image_aug, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        imglist = []
-        imglist.append(image_aug)
-        images_aug = seq.augment_images(imglist)
-        image_aug = images_aug[0]
+            tail_imglist = []
+            tail_imglist.append(image_aug)
+            images_aug = tail_seq.augment_images(tail_imglist)
+            image_aug = images_aug[0]
+            # image_aug = Image.fromarray(cv2.cvtColor(image_aug, cv2.COLOR_BGRA2RGBA))
+            image_aug = cv2.resize(image_aug, (img_w, img_h))
+            image = Image.fromarray(cv2.cvtColor(image_aug, cv2.COLOR_GRAY2RGBA))
 
-        #
-        kernel = np.ones((2, 2), np.uint8)
-        # image_aug = cv2.erode(image_aug, kernel, iterations=1)
-        # image_aug = cv2.dilate(image_aug, kernel, iterations=2)
+        else:       ## HWDB
+            head_augmenter = []
+            tail_augmenter = []
+            head_augmenter.append(iaa.Invert(1, per_channel=True))
+            # aug_pwa = iaa.Resize((0.7, 1))  # 将w和h在0.5-1.5倍范围内resize
+            head_augmenter.append(iaa.Sharpen(alpha=(1, 1), lightness=(1, 1)))  # 锐化处理
+            # augmenter.append(iaa.ContrastNormalization((1.5, 1.5), per_channel=0.5))  # 对比度
+            head_seq = iaa.Sequential(head_augmenter)
 
-        image_aug = cv2.dilate(image_aug, kernel, iterations=2)
-        image_aug = cv2.erode(image_aug, kernel, iterations=1)
-        #
-        # image_aug = cv2.Canny(image_aug, 0, 100)
-        #
-        # seq = iaa.Sequential([iaa.Invert(1, per_channel=True)])
-        # images_aug = seq.augment_images([image_aug])
-        # image_aug = images_aug[0]
-        # image_aug = cv2.morphologyEx(image_aug, cv2.MORPH_OPEN, kernel)
+            tail_augmenter.append(iaa.Invert(1, per_channel=True))
+            tail_seq = iaa.Sequential(tail_augmenter)
+            # img为opencv，image为PIL，二者进行转化
+            # PIL->opencv
+            # img_cv = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2BGRA)
+            image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGBA2GRAY)
+            image_aug = cv2.resize(image,(128,128))
+            # print("image_aug.shape=",image_aug.shape)
+            # image_aug = cv2.bilateralFilter(image_aug, 9, 75, 75)
+            # image_aug = cv2.GaussianBlur(image_aug, ksize=(3, 3), sigmaX=0, sigmaY=0)
+            # + cv2.THRESH_OTSU
+            # print("_true_write_type_data--char_from=",char_from)
+            ret3, image_aug = cv2.threshold(image_aug, 245, 255, cv2.THRESH_BINARY)
+            # ret3, image_aug = cv2.threshold(image_aug, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            head_imglist = []
+            head_imglist.append(image_aug)
+            images_aug = head_seq.augment_images(head_imglist)
+            image_aug = images_aug[0]
 
-        # image_aug = Image.fromarray(cv2.cvtColor(image_aug, cv2.COLOR_BGRA2RGBA))
-        image_aug = Image.fromarray(cv2.cvtColor(image_aug, cv2.COLOR_GRAY2RGBA))
+            #
+            kernel = np.ones((2, 2), np.uint8)
+            # image_aug = cv2.erode(image_aug, kernel, iterations=1)
+            # image_aug = cv2.dilate(image_aug, kernel, iterations=2)
 
-        return image_aug
+            # image_aug = cv2.dilate(image_aug, kernel, iterations=2)
+            # image_aug = cv2.erode(image_aug, kernel, iterations=1)
+            #
+            # image_aug = cv2.Canny(image_aug, 0, 100)
+            #
+            # seq = iaa.Sequential([iaa.Invert(1, per_channel=True)])
+            # images_aug = seq.augment_images([image_aug])
+            # image_aug = images_aug[0]
+            # image_aug = cv2.morphologyEx(image_aug, cv2.MORPH_OPEN, kernel)
+
+            tail_imglist = []
+            tail_imglist.append(image_aug)
+            images_aug = head_seq.augment_images(tail_imglist)
+            image_aug = images_aug[0]
+
+            # image_aug = Image.fromarray(cv2.cvtColor(image_aug, cv2.COLOR_BGRA2RGBA))
+            image = cv2.resize(image_aug, (img_w, img_h))
+            image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_GRAY2RGBA))
+
+        return image
 
     def _char_image_data_augment(self, img,char_from):
-        if self.true_write_type:    # 首先对单字符图片进行真实化处理
-            img = self._true_write_type_data(img,char_from)
+        # if self.true_write_type:    # 首先对单字符图片进行真实化处理
+        #     img = self._true_write_type_data(img,char_from)
 
         height = img.height
         width = img.width
@@ -752,10 +858,12 @@ class DataGenerator:
 
         str, char_list = self._get_char_list(str)
         # if self.test_mode:
-            # str = "数据增强效果图"
+            # str = "数据真实化效果图"
             # str = "刽寝镇勒"
+            # str = "另一种意见则认为"
+            # str = "以否定丑来达到间接肯定美"
 
-        img_aug,img = self._get_str_img(str)
+        img_aug,img,str_from = self._get_str_img(str)
         image_aug = self._line_image_data_augment(img_aug,len(str))
 
         # print("gen_data_with_img_and_label,image_aug.shape=",image_aug.shape)
@@ -766,9 +874,12 @@ class DataGenerator:
             image_list.append(image_aug)
             label_list = []
             aug_str = self._trans_augment_parameter(self.temp_data_augment)
-            label_list.append(str+"_"+"original")
-            label_list.append(str+"_"+"augment_"+aug_str)
-            self._show_image(image_list,label_list,filename=aug_str+"_"+str)
+            if self.true_write_type and self.temp_true_type:
+                aug_str += "_真实化"
+
+            label_list.append(str+"_"+"original"+"_"+str_from)
+            label_list.append(str+"_"+"augment"+aug_str+"_"+str_from)
+            self._show_image(image_list,label_list,filename=str_from+"_"+aug_str+"_"+str)
             # self._show_image(image_aug, str+"_"+"augment_"+self.temp_data_augment)
 
         return image_aug,str, char_list
@@ -785,6 +896,7 @@ class DataGenerator:
         self.chars_gap_width = chars_gap_width
         self.data_augment = data_augment                # 是整个Train上应用的效果
         self.temp_data_augment = self.data_augment      # 临时作为每个样本的增强效果
+        self.temp_true_type = self.true_write_type      # 临时作为每个样本的真实化
         self.data_augment_percent = data_augment_percent
 
         if not os.path.exists(self.gen_image_dir):
@@ -1048,7 +1160,7 @@ def run(args):
     dg = DataGenerator(hwdb_trn_dir=args.hwdb_trn_dir,hwdb_tst_dir=args.hwdb_tst_dir,hcl_dir=args.hcl_dir,
                        background_dir=args.background_dir,default_bg_path=args.default_bg_path,corpus_path=args.corpus_path,off_corpus=args.off_corpus,hcl_ratio=args.hcl_ratio,
                        img_height=args.image_height,img_width=args.image_width,const_char_num=args.const_char_num,
-                       max_char_num=args.max_char_num,line_mix=args.line_mix,test_mode=args.test_mode,true_write_type=args.true_write_type)
+                       max_char_num=args.max_char_num,line_mix=args.line_mix,test_mode=args.test_mode,true_write_type=args.true_write_type,true_write_type_ratio=args.true_write_type_ratio)
 
     if args.is_first:
         ## 第一次使用需要构建HWDB和语料库

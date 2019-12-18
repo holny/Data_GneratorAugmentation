@@ -5,20 +5,21 @@ total_line_augment = "lpbnecfg"
 total_char_augment = "mra"
 """
 line单行数据增强: l-画线; p-仿射变换; b-模糊(高斯、均匀、中值中随机); n-噪声(高斯噪声、弹性变换中随机); e-(浮雕、对比度中随机); c-像素(Dropout、加减、乘除中随机); 
-    f-行倾斜随机角度; g-图片背景
-char单字符数据增强: m-单字符随机上下;  r-单字符随机大小; a-单字符倾斜随机角度
+    f-行倾斜随机角度; g-图片背景;
+char单字符数据增强: m-单字符随机上下;  r-单字符随机大小; a-单字符倾斜随机角度; d-对字符数据腐蚀或膨胀一次;
 0-用于test_mode 不使用任何数据增强的情况(true_write_type测试)
 """
 default_args = {
-    "test_mode":False,           # 使用测试模式,用matplotlib查看数据增强效果.效果保存在data/test_mode目录下
+    "test_mode":True,           # 使用测试模式,用matplotlib查看数据增强效果.效果保存在data/test_mode目录下
     "train_data_num":124,       # 要生成的训练集数据量
     "test_data_num":64,         # 要生成的测试集数据量
     "valid_data_num":32,        # 要生成的验证集数据量
     "write_types":3,            # HCL HWDB 写法(同一行字符生成图片几次)
 
-    "data_augment":"",         # 在训练集开启数据增强
+    "data_augment":"0g",         # 在训练集开启数据增强
     "data_augment_percent":1,         # 在训练集开启数据增强的占比
-    "true_write_type":True,           # True-处理字符，让字符图片向真实笔记靠拢,建议使用HCL数据集，效果好.
+    "true_write_type":True,           # True-真实化字体处理字符，让字符图片向真实笔记靠拢,建议使用HCL数据集，效果好.
+    "true_write_type_ratio":1,           # 真实化字体数据占总体数据比重
     "data_dir":"./data",        # 生成的数据存储目的地址
 
     "background_dir":"./res/background",        # 训练集添加的背景图片地址
@@ -122,10 +123,17 @@ def parse_arguments():
         "-true",
         "--true_write_type",
         action="store_true",
-        help="True-处理字符，让字符图片向真实笔记靠拢.",
+        help="True-真实化处理字符，让字符图片向真实数据字体靠拢.",
         default=default_args["true_write_type"]
     )
-
+    parser.add_argument(
+        "-true_ratio",
+        "--true_write_type_ratio",
+        type=float,
+        nargs="?",
+        help="真实化字体数据占所有数据的比重,默认0.5.",
+        default=default_args["true_write_type_ratio"]
+    )
     parser.add_argument(
         "-dir",
         "--data_dir",
